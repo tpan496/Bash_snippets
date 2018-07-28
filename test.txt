@@ -1,0 +1,112 @@
+#include<vector>
+#include<algorithm>
+#include<iostream>
+
+using Timestamp = uint64_t;
+using Value = double;
+using TimeSeries = std::vector<Timestamp>;
+using ValueSeries = std::vector<Value>;
+
+struct IdxRange {
+    long int start;
+    long int end;
+};
+
+struct HLOC {
+    Value hi;
+    Value lo;
+    Value op;
+    Value cl;
+
+    void print() {
+        std::cout << "hi: " << hi << ", lo: " << lo << ", op: " << op << ", cl: " << cl << std::endl;
+    }
+};
+
+struct Pack { std::vector<Timestamp> timestamps;
+    std::vector<HLOC> values;
+};
+
+class Extractor{
+public:
+    Extractor(char* mem) {
+    }
+
+    void sample(TimeSeries& timestamps, std::vector<ValueSeries>& valuesVec, Timestamp from, Timestamp to, Timestamp period, Pack& pack) {
+        // Loop over periods
+        IdxRange range{0,0};
+        std::vector<Value> prevCl(valuesVec.size());
+        bool isFirstPeriod;
+        for (auto periodFrom = findStart(timestamps, from); periodFrom < to; periodFrom += period) {
+            range = findIdxRange(timestamps, periodFrom, periodFrom + period, range.end);
+            std::cout << "range: " << range.start << ", " << range.end << std::endl;
+            std::cout << "period: " << periodFrom << ", " << periodFrom + period << std::endl;
+            writeHlocToPack(range, timestamps, valuesVec, prevCl, isFirstPeriod, pack);
+            isFirstPeriod = false;
+        }
+    }
+
+    Timestamp findStart(TimeSeries timestamps, Timestamp from) {
+        auto iter = std::lower_bound(timestamps.begin(), timestamps.end(), from);
+        return *iter;
+    }
+
+    IdxRange findIdxRange(TimeSeries timestamps, Timestamp from, Timestamp to, int offset) {
+        const auto iterFrom = std::lower_bound(timestamps.begin() + offset, timestamps.end(), from);
+        const auto iterTo = std::upper_bound(timestamps.begin() + offset, timestamps.end(), to);
+        const auto idxFrom = std::distance(timestamps.begin(), iterFrom);
+        const auto idxTo = std::distance(timestamps.begin(), iterTo);
+        return IdxRange{idxFrom, idxTo - 1};
+    }
+
+    void writeHlocToPack(IdxRange range, TimeSeries& timestamps, std::vector<ValueSeries>& valuesVec, std::vector<Value>& prevCl, bool isFirstPeriod, Pack& pack) {
+        int labelSize = valuesVec.size();
+        std::vector<Value> hi(labelSize);
+        std::vector<Value> lo(labelSize);
+        std::vector<Value> op(labelSize);
+        std::vector<Value> cl(labelSize);
+
+        if(isFirstPeriod){
+            for(auto i = 0; i < labelSize; i++){
+                op[i] = valuesVec[i][0];
+            }
+        } else {
+            for(auto i = 0; i < labelSize; i++){
+                op[i] = prevCl[i];
+            }
+        }
+        for(auto i = range.start; i < range.end; i++) {
+            for(auto values : valuesVec) {
+                int valuesIndex = 0;
+                int valueCounter = 0;
+                for(auto value : values) {
+                    if(value > hi[valuesIndex]) {
+                        hi[valuesIndex] = value;
+                    }
+
+                    if(value < lo[valuesIndex]) {
+                        lo[valuesIndex] = value;
+                    }
+
+                    if(valueCounter == values.size() - 1) {
+                        cl[valuesIndex] = value;
+                        prevCl[valuesIndex] = value;
+                    }
+                } 
+            }
+        }
+    }
+};
+
+int main() {
+    Extractor extractor("test");
+    
+    // Tests
+    TimeSeries series{5,7,9,10,13};
+    ValueSeries v1{0.1,0.2,0.3,0.4,0.5};
+    ValueSeries v2{-0.1,-0.2,-0.3,-0.4,-0.5};
+    ValueSeries v3{-2,88,192,-3,99};
+    std::vector<ValueSeries> values{v1,v2,v3};
+    Pack pack;
+    extractor.sample(series, values, 11, 14, 1, pack);
+}
